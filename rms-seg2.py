@@ -38,30 +38,30 @@ def infer_rhabdo(image_file,out_file,**kwargs):
         # segmentation image.  We will pick a channel from it
         writeDicomSegObject(image_file,predict_image,out_file)
     else:
-        predict_image = start_inference_mainthread(image_file,out_file)
+        predict_image, predict_color = start_inference_mainthread(image_file,out_file)
 
 
-    predict_bgr = cv2.cvtColor(predict_image,cv2.COLOR_RGB2BGR)
+    predict_bgr = cv2.cvtColor(predict_color,cv2.COLOR_RGB2BGR)
     print('output conversion and inferencing complete')
 
-    
-
-    # generate unique names for multiple runs.  Add extension so it is easier to use
-    outname = image_file.split('.')[0]+'_predict.png'
+    # generate unique names for multiple runs.  Add extension so it is easier to use. Put output
+    # in the same directory as the output dicom file
+    out_dir = os.path.dirname(out_file)
+    outname_color = os.path.join(out_dir,image_file.split('.')[0]+'_predict.png')
 
     # write the output object using openCV  
-    print('writing output')
-    cv2.imwrite(outname,predict_bgr)
-    print('writing completed')
+    print('writing color output')
+    cv2.imwrite(outname_color,predict_bgr)
+    print('writing color completed')
 
     # new output of segmentation statistics in a string
-    statistics = generateStatsString(predict_image)
+    statistics = generateStatsString(predict_color)
     # generate unique names for multiple runs.  Add extension so it is easier to use
     statoutname = image_file.split(',')[0]+'_stats.json'
     open(statoutname,"w").write(statistics)
 
     # return the name of the output file
-    return outname, statoutname
+    return outname_color, statoutname
 
 
 import sys
@@ -124,8 +124,8 @@ YELLOW = [255, 255, 0] # NECROSIS: 50
 EPSILON = 1e-6
 
 # what magnification should this pipeline run at
-ANALYSIS_MAGNIFICATION = 10
-THRESHOLD_MAGNIFICATION = 2.5
+ANALYSIS_MAGNIFICATION = 2.5
+THRESHOLD_MAGNIFICATION = 0.625
 ASSUMED_SOURCE_MAGNIFICATION = 20.0
 
 # what % interval we should print out progress so it can be snooped by the web interface
@@ -265,36 +265,27 @@ def _unaugment(index, image):
 
     return image
 
-def _gray_to_color(input_probs):
-
+def _gray_to_labelmap(input_probs):
     index_map = (np.argmax(input_probs, axis=-1)*50).astype('uint8')
     height = input_probs.shape[0]
     width = input_probs.shape[1]
-
     heatmap = np.zeros((height, width, 1), np.float32)
-
     # Background
     heatmap[index_map == 0, 0] = input_probs[:, :, 0][index_map == 0]
-
     # Necrosis
     heatmap[index_map==50, 0] = input_probs[:, :, 1][index_map==50]
-
     # Stroma
     heatmap[index_map==100, 0] = input_probs[:, :, 2][index_map==100]
-
     # ERMS
     heatmap[index_map==150, 0] = input_probs[:, :, 3][index_map==150]
-
     # ARMS
     heatmap[index_map==200, 0] = input_probs[:, :, 4][index_map==200]
-
     heatmap[np.average(heatmap, axis=-1)==0, :] = 1.
-
     return heatmap
 
 
 # saved as I tried to change the output
-def _gray_to_color_orig(input_probs):
+def _gray_to_color(input_probs):
 
     index_map = (np.argmax(input_probs, axis=-1)*50).astype('uint8')
     height = index_map.shape[0]
@@ -603,11 +594,15 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
         del prob_map_valid
         gc.collect()
 
+    # save numpy in same directory as input image
+    fileNoExtension = os.path.basename(image_path).split('.')[0]
+    dirName = os.path.dirname(image_path)
+    numpyFileName = os.path.join(dirName,fileNoExtension+'_prob_map_seg_stack.npy')
+    np.save(numpyFileName, prob_map_seg_stack)
     pred_map_final = np.argmax(prob_map_seg_stack, axis=-1)
-    #np.save('prob_map_seg_stack.npy', prob_map_seg_stack)
-    
+
     pred_map_final_gray = pred_map_final.astype('uint8') * 50
-    del pred_map_final
+    #del pred_map_final
     gc.collect()
     pred_map_final_ones = [(pred_map_final_gray == v) for v in CLASS_VALUES]
     del pred_map_final_gray
@@ -616,6 +611,8 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
     del pred_map_final_ones
     gc.collect()
 
+    pred_labelmap = pred_map_final
+    #pred_labelmap = _gray_to_labelmap(pred_map_final_stack)
     pred_colormap = _gray_to_color(pred_map_final_stack)
     del pred_map_final_stack
     gc.collect()
@@ -625,10 +622,11 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
     #np.save('prob_colormap.npy', prob_colormap)
 
     # changing output to not be scaled by 256,  instead each channel is either 0 or 1
-    out_image = (pred_colormap).astype('uint8')
+    out_label = (pred_labelmap).astype('uint8')
+    out_color = (pred_colormap*255).astype('uint8')
 
     # return image instead of saving directly
-    return out_image
+    return out_label, out_color
 
 
 
@@ -681,8 +679,8 @@ def load_best_model(model, path_to_model, best_prec1=0.0):
 
 def inference_image(model, image_path, BATCH_SIZE, num_classes):
     kernel = _gaussian_2d(num_classes, 0.5, 0.0)
-    predict_image = _inference(model, image_path, BATCH_SIZE, num_classes, kernel, 1)
-    return predict_image
+    predict_image, color_image = _inference(model, image_path, BATCH_SIZE, num_classes, kernel, 1)
+    return predict_image, color_image
 
 def start_inference(msg_queue, image_file):
     reset_seed(1)
@@ -719,7 +717,7 @@ def start_inference(msg_queue, image_file):
     # not needed anymore, returning value through message queue
     #return predict_image
 
-def start_inference_mainthread(image_file,out_file):
+def start_inference_mainthread(image_file,out_dir):
     reset_seed(1)
 
     best_prec1_valid = 0.
@@ -746,13 +744,15 @@ def start_inference_mainthread(image_file,out_file):
     print('Loading model is finished!!!!!!!')
 
     # return image data so toplevel task can write it out
-    predict_image = inference_image(model,image_file, BATCH_SIZE, len(CLASS_VALUES))
+    predict_image, predict_color = inference_image(model,image_file, BATCH_SIZE, len(CLASS_VALUES))
     # pass the original dicome file, so header information can be read.  Pass the multichannel
     # segmentation image.  We will pick a channel from it
+    in_basename = os.path.basename(image_file).split(',')[0]
+    out_file = os.path.join(out_dir,in_basename+'_seg.dcm')
     writeDicomSegObject(image_file,predict_image,out_file)
     
     # not needed anymore, returning value through message queue
-    return predict_image
+    return predict_image, predict_color
 
 
 # calculate the statistics for the image by converting to numpy and comparing masks against
@@ -791,9 +791,7 @@ def generateStatsString(predict_image):
     return statsString
 
 
-
-
-#----------------
+#---------------- DICOM export --------
 
 
 from pathlib import Path
@@ -805,7 +803,7 @@ from pydicom.filereader import dcmread
 from pydicom import Dataset
 from dicomweb_client import DICOMfileClient
 from tempfile import TemporaryDirectory
-
+from typing import Tuple
 
 def disassemble_total_pixel_matrix(
     seg_total_pixel_matrix: np.ndarray,
@@ -846,7 +844,61 @@ def disassemble_total_pixel_matrix(
             tile_cols,
         )
 
-# function stolen from idc-pan-cancer-archive: 
+
+
+
+# from Max to calculate the derived parameters needed when the segmentation image is not the same
+# resolution as the source image.  This creates records that have to be passed in to the creation
+# step in HighDicom. 
+
+def _compute_derived_image_attributes(source_image: Dataset, total_pixel_matrix: np.ndarray) -> Tuple[hd.PlanePositionSequence, hd.PixelMeasuresSequence]:
+    """Compute attributes of a derived single-frame image.
+    Parameters
+    ----------
+    source_image: pydicom.Dataset
+        Source image from which single-frame image was derived
+    total_pixel_matrix: numpy.ndarray
+        Total Pixel matrix of derived single-frame image for which attribute
+        values should be computed
+    Returns
+    -------
+    plane_positions: highdicom.PlanePositionSequence
+        Plane position of the single-frame image
+    pixel_measures: highdicom.PixelMeasuresSequence
+        Pixel measures of the single-frame image
+    """
+    sm_total_rows = int(
+        np.ceil(source_image.TotalPixelMatrixRows / source_image.Rows)
+        * source_image.Rows
+    )
+    sm_total_cols = int(
+        np.ceil(source_image.TotalPixelMatrixColumns / source_image.Columns)
+        * source_image.Columns
+    )
+    origin = source_image.TotalPixelMatrixOriginSequence[0]
+    x_offset = origin.XOffsetInSlideCoordinateSystem
+    y_offset = origin.YOffsetInSlideCoordinateSystem
+    sm_shared_func_groups = source_image.SharedFunctionalGroupsSequence[0]
+    sm_pixel_measures = sm_shared_func_groups.PixelMeasuresSequence[0]
+    sm_pixel_spacing = sm_pixel_measures.PixelSpacing
+    sm_slice_thickness = sm_pixel_measures.SliceThickness
+    derived_pixel_spacing = (
+        (sm_total_rows * sm_pixel_spacing[0]) / total_pixel_matrix.shape[0],
+        (sm_total_cols * sm_pixel_spacing[1]) / total_pixel_matrix.shape[1],
+    )
+    derived_plane_position = hd.PlanePositionSequence(
+        coordinate_system=hd.CoordinateSystemNames.SLIDE,
+        image_position=(x_offset, y_offset, 0.0),
+        pixel_matrix_position=(1, 1),  # there is only one frame
+    )
+    derived_pixel_measures = hd.PixelMeasuresSequence(
+        pixel_spacing=derived_pixel_spacing, slice_thickness=sm_slice_thickness
+    )
+    return (derived_plane_position, derived_pixel_measures)
+
+
+
+
 
 
 
@@ -854,6 +906,7 @@ def disassemble_total_pixel_matrix(
 #  This is based on the hidicom output example listed in the readthedocs documentation
 
 CHANNEL_DESCRIPTION = {}
+CHANNEL_DESCRIPTION['chan_0'] = 'Background'
 CHANNEL_DESCRIPTION['chan_1'] = 'Necrosis'
 CHANNEL_DESCRIPTION['chan_2'] = 'Stroma'
 CHANNEL_DESCRIPTION['chan_3'] = 'ARMS'
@@ -864,14 +917,19 @@ def writeDicomSegObject(image_path, seg_image, out_path):
     # Path to multi-frame SM image instance stored as PS3.10 file
     image_file = Path(image_path)
 
-   # Read SM Image data set from PS3.10 files on disk.  This will provide the 
+    # Read SM Image data set from PS3.10 files on disk.  This will provide the 
     # reference image size and other dicom header information
     image_dataset = dcmread(str(image_file))
 
-    # take the ARMS channel 
-    mask = disassemble_total_pixel_matrix(seg_image[:,:,0],image_dataset)
+    # function stolen from idc-pan-cancer-archive repository to re-tile the numpy to match the tiling
+    # from the source image
+    print('passing in a numpy array of shape:',seg_image.shape)
+    mask = disassemble_total_pixel_matrix(seg_image,image_dataset)
+    print('received a numpy array of shape:',mask.shape)
 
- 
+    # make the derived image header information
+    derived_plane_positions,derived_pixel_measures = _compute_derived_image_attributes(image_dataset, mask)
+
     # Describe the algorithm that created the segmentation
     algorithm_identification = hd.AlgorithmIdentificationSequence(
         name='FNLCR_RMS_seg_iou_0.7343_epoch_60',
@@ -890,7 +948,6 @@ def writeDicomSegObject(image_path, seg_image, out_path):
         tracking_uid=hd.UID(),
         tracking_id='RMS segmentation_'+str(CHANNEL_DESCRIPTION['chan_1'])
     )
-
  # Describe the segment
     description_segment_2 = hd.seg.SegmentDescription(
         segment_number=2,
@@ -903,7 +960,7 @@ def writeDicomSegObject(image_path, seg_image, out_path):
         tracking_id='RMS segmentation_'+str(CHANNEL_DESCRIPTION['chan_2'])
     )
 
-     # Describe the segment
+    # Describe the segment
     description_segment_3 = hd.seg.SegmentDescription(
         segment_number=3,
         segment_label=CHANNEL_DESCRIPTION['chan_3'],
@@ -915,7 +972,7 @@ def writeDicomSegObject(image_path, seg_image, out_path):
         tracking_id='RMS segmentation_'+str(CHANNEL_DESCRIPTION['chan_3'])
     )
 
-     # Describe the segment
+    # Describe the segment
     description_segment_4 = hd.seg.SegmentDescription(
         segment_number=4,
         segment_label=CHANNEL_DESCRIPTION['chan_4'],
@@ -932,22 +989,25 @@ def writeDicomSegObject(image_path, seg_image, out_path):
         source_images=[image_dataset],
         pixel_array=mask,
         segmentation_type=hd.seg.SegmentationTypeValues.BINARY,
+        #segmentation_type=hd.seg.SegmentationTypeValues.FRACTIONAL,
         segment_descriptions=[description_segment_1,description_segment_2,description_segment_3,description_segment_4],
         series_instance_uid=hd.UID(),
         series_number=2,
         sop_instance_uid=hd.UID(),
         instance_number=1,
+        # the following two entries are added because the output resolution is different from the source
+        #pixel_measures=derived_pixel_measures,
+        #plane_positions= derived_plane_positions,
         manufacturer='Aperio',
         manufacturer_model_name='Unknown',
         software_versions='v1',
         device_serial_number='Unknown'
     )
 
-    print(seg_dataset)
+    #print(seg_dataset)
     # change output file with some function is needed
     outfileanme = out_path
     seg_dataset.save_as(outfileanme)
-
 
 
 
@@ -967,6 +1027,19 @@ outPath = '/home/clisle/proj/slicer/PW39/images/out-P0005006/P0005006_seg.dcm'
 
 # from David's converter
 imagePath = '/media/clisle/Imaging/IDC/sample_data_from_pixelmed/PARNED-0BNNF4_B2_Q30/DCM_0'
-outPath = '/media/clisle/Imaging/IDC/model_output/PARNED/PARNED_seg.dcm'
+outPath = '/media/clisle/Imaging/IDC/model_output/PARNED/PARNED_rescaled_seg.dcm'
+
+# from google. this was missing some dicom header OpticalPathSequence
+imagePath = '/media/clisle/CurtData/RMS-work/early-public-wsi-images/singlePARNJS/level-3-frames-0-42.dcm'
+outPath = '/media/clisle/CurtData/RMS-work/early-public-wsi-images/singlePARNJS/PARNJS_lowres_seg.dcm'
+
+# a low-res version of one of David's converted outpuots
+imagePath = '/media/clisle/Imaging/IDC/low_res_pixelmed/DCM_3'
+outPath = '/media/clisle/Imaging/IDC/low_res_pixelmed/PARNED_lev3_seg.dcm'
+
+# a low-res version of one of David's converted outpuots
+imagePath = '/media/clisle/Imaging/IDC/pmed_low_res2/DCM_3'
+outPath = '/media/clisle/Imaging/IDC/pmed_low_res2'
+
 
 outfile,outstats = infer_rhabdo(imagePath,outPath)
