@@ -374,7 +374,10 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
         assumedMagnification = True
     else:
         assumedMagnification = False
-
+        # run at the exact magnifiction of the source and generate 25% size for OTSU
+        ANALYSIS_MAGNIFICATION = metadata['magnification']
+        THRESHOLD_MAGNIFICATION = ANALYSIS_MAGNIFICATION
+        
     # the theoretical adjustment for the magnification would be as below:
     # height_proc = int(height_org * (ANALYSIS_MAGNIFICATION/metadata['magnification']))
     # width_proc = int(width_org * (ANALYSIS_MAGNIFICATION/metadata['magnification']))
