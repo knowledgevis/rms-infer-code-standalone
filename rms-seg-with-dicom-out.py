@@ -364,8 +364,7 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
     width_org = metadata['sizeX']
 
     # if we are processing using a reconstructed TIF from VIPS, there will not be a magnification value.
-    # So we will assume 20x as the native magnification, which matches the source data the
-    # IVG  has provided.
+    # So we will assume a native magnification.  See the constants defined somewhere around line 127
 
     if isNotANumber(metadata['magnification']):
         print('warning: No magnfication value in source image. Assuming the source image is at ',
@@ -584,7 +583,13 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
         #np.save("prob_map_seg.npy",prob_map_seg)
         #np.save('weight_sum.npy',weight_sum)
         prob_map_seg = np.true_divide(prob_map_seg, weight_sum)
-        prob_map_valid = prob_map_seg[PATCH_OFFSET:PATCH_OFFSET + height, PATCH_OFFSET:PATCH_OFFSET + width, :]
+
+        # *********************************
+        # this induced a 1/2 PATCH_OFFSET shift in the output image compared with the reference DICOM. 
+        # so replace with a direct copy operation instead. 
+        # *********************************
+        #prob_map_valid = prob_map_seg[PATCH_OFFSET:PATCH_OFFSET + height, PATCH_OFFSET:PATCH_OFFSET + width, :]
+        prob_map_valid = prob_map_seg[0:height, 0: width, :]
 
         # free main system memory since the images are big
         del prob_map_seg
@@ -628,6 +633,8 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
     out_label = (pred_labelmap).astype('uint8')
     out_color = (pred_colormap*255).astype('uint8')
 
+    numpyFileName = os.path.join(dirName,fileNoExtension+'_out_color.npy')
+    np.save(numpyFileName, out_color)
     # return image instead of saving directly
     return out_label, out_color
 

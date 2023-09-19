@@ -4,6 +4,11 @@ import large_image_source_dicom
 import large_image_source_tiff
 from pydicom import config
 
+# this file is able to run the RMS segmentation model but incorrectly uses Max's 
+# older code and doesn't create a correct DICOM outputfile.  This file is kept for 
+# legacy. look at rms-seg2.py for continued work. 
+# 6/12/23
+
 
 # define global variable that is set according to whether GPUs are discovered
 USE_GPU = False
@@ -321,8 +326,8 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
     # open an access handler on the large image
     #source = large_image.getTileSource(image_path)
     config.enforce_valid_values = False
-    source = large_image_source_tiff.open(image_path)
-    #source = large_image_source_dicom.open(image_path)
+    #source = large_image_source_tiff.open(image_path)
+    source = large_image_source_dicom.open(image_path)
 
     # print image metadata
     metadata = source.getMetadata()
@@ -588,6 +593,23 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
     #prob_colormap = _gray_to_color(prob_map_seg_stack)
     #np.save('prob_colormap.npy', prob_colormap)
 
+    # gather image data for writing out as DICOM
+    dcm_file=pydicom.dcmread(image_path)
+    #SizeInX=dcm_file.TotalPixelMatrixColumns
+    #SizeInY=dcm_file.TotalPixelMatrixRows
+    FrameSize=dcm_file.Rows
+    FramesInX=int(SizeInX/FrameSize)
+    FramesInY=int(SizeInY/FrameSize)
+    # print image metadata
+    metadata = {}
+    metadata['sizeX'] = dcm_file.TotalPixelMatrixColumns
+    metadata['sizeY'] = dcm_file.TotalPixelMatrixRows
+    metadata['levels'] = 6   # arbitrary
+    metadata['magnification'] = ANALYSIS_MAGNIFICATION
+    print(metadata)
+    print('sizeX:', metadata['sizeX'], 'sizeY:', metadata['sizeY'], 'levels:', metadata['levels'], metadata['magnification'])
+
+
     # write out the result as dicom-wsi
     imageInfo = {}
     imageInfo['ImageWidthInMm'] = 30  #(in mm) ((image_dims[1])*mpp)/1000)
@@ -598,7 +620,7 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
     imageInfo['PixelSizeInMm'] = 0.0003  # (in mm?) (mpp/1000)
     imageInfo['ImageRowCount'] = width_org
     imageInfo['ImageColumnCount'] = height_org
-    outpath = '/media/clisle/CurtData/RMS-work/sample_images/PAWDLM-0BLLXP_A2_RAW/probability.dcm'
+    outpath = '/home/clisle/proj/slicer/PW39/images/out-P0005006/probability.dcm'
     out_image = (pred_colormap*255.0).astype('uint8')
     writeProbabilityMapToDICOM(out_image,outpath,imageInfo)
 
@@ -1117,6 +1139,7 @@ def writeProbabilityMapToDICOM(map,out_path,imageInfoRecord):
     dcm_file_Optical_Path_Identification_Sequence.OpticalPathIdentifier = '0'
     dcm_file_Shared_Functional_Groups.OpticalPathIdentificationSequence = Sequence([dcm_file_Optical_Path_Identification_Sequence])
     dcm_file.SharedFunctionalGroupsSequence = Sequence([dcm_file_Shared_Functional_Groups])
+ 
     encoded_frames = []
     instance_byte_string_buffer = io.BytesIO()
     image = Image.fromarray(map)
@@ -1138,14 +1161,18 @@ def writeProbabilityMapToDICOM(map,out_path,imageInfoRecord):
 
 
 
+
 #imagePath = '/Volumes/CurtData/RMS-work/sample_images/Sample_WSI_Image.sys'
 # this file seems broken
-imagePath = '/media/clisle/CurtData/RMS-work/sample_images/PAWDLM-0BLLXP_A2_RAW/DCM_0'
+#imagePath = '/media/clisle/CurtData/RMS-work/sample_images/PAWDLM-0BLLXP_A2_RAW/DCM_0'
 # this image just barely processes in 64GB RAM
 #imagePath = '/media/clisle/Imaging/IDC/sample_data_from_pixelmed/PARNED-0BNNF4_B2_Q30/DCM_0'
 # this image requires > 64GB RAM to process
 #imagePath = '/media/clisle/CurtData/RMS-work/public-wsi-images/outputPARNJS/level-1-frames-0-2496.dcm'
 # this one just fits in 64GB RAM plus swap
 #imagePath = '/media/clisle/CurtData/RMS-work/public-wsi-images/output/level-0-frames-0-6072.dcm'
+
+imagePath =  '/home/clisle/proj/slicer/PW39/images/P0005006/1.2.826.0.1.3680043.8.498.26978701885807404641007366994220544128.dcm'
+
 
 outfile,outstats = infer_rhabdo(imagePath)
