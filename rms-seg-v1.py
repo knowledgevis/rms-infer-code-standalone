@@ -6,7 +6,7 @@ from pydicom import config
 
 # this file is able to run the RMS segmentation model but incorrectly uses Max's 
 # older code and doesn't create a correct DICOM outputfile.  This file is kept for 
-# legacy. look at rms-seg2.py for continued work. 
+# legacy. look at rms-seg-with-dicom-output.py for continued work. 
 # 6/12/23
 
 

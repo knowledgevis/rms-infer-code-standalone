@@ -5,7 +5,7 @@ import large_image_source_tiff
 
 # 6/15/23
 # this is a copy from the rms-seg-with-dicom (which was a dicom binary segmentation). This
-# file attempts to write out the probability of class membership as a FRACTIONAL segmentation object.
+# routine writes out the probability of class membership as a FRACTIONAL segmentation object.
 
 # define global variable that is set according to whether GPUs are discovered
 USE_GPU = True
