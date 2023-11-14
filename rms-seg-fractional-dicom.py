@@ -582,8 +582,11 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
         #np.save("prob_map_seg.npy",prob_map_seg)
         #np.save('weight_sum.npy',weight_sum)
         prob_map_seg = np.true_divide(prob_map_seg, weight_sum)
-        prob_map_valid = prob_map_seg[PATCH_OFFSET:PATCH_OFFSET + height, PATCH_OFFSET:PATCH_OFFSET + width, :]
 
+        #  ** the line below induced a 1/2 patch offset of the segmentation with respect to source image
+        #prob_map_valid = prob_map_seg[PATCH_OFFSET:PATCH_OFFSET + height, PATCH_OFFSET:PATCH_OFFSET + width, :]
+        prob_map_valid = prob_map_seg[0:height, 0: width, :]
+        
         # free main system memory since the images are big
         del prob_map_seg
         gc.collect()
@@ -1076,5 +1079,7 @@ outPath = '/media/clisle/Imaging/IDC/low_res_pixelmed/PARNED_lev3_seg.dcm'
 imagePath = '/media/clisle/Imaging/IDC/pmed_low_res2/DCM_3'
 outPath = '/media/clisle/Imaging/IDC/pmed_low_res2'
 
+imagePath = '/media/clisle/KVisImagery/NCI/IDC/Oct2023_RMS_SamplesToIDC/PALMPL-0BMX5D-AKA-RMS2397/image/PALMPL-0BMX5D_1_DCM_3'
+outPath = '/media/clisle/KVisImagery/NCI/IDC/Oct2023_RMS_SamplesToIDC/PALMPL-0BMX5D-AKA-RMS2397/model_prediction'
 
 outfile,outstats = infer_rhabdo(imagePath,outPath)

@@ -1051,5 +1051,8 @@ outPath = '/media/clisle/Imaging/IDC/low_res_pixelmed/PARNED_lev3_seg.dcm'
 imagePath = '/media/clisle/Imaging/IDC/pmed_low_res2/DCM_3'
 outPath = '/media/clisle/Imaging/IDC/pmed_low_res2'
 
+# a low-res version of one of David's converted outpuots
+imagePath = '/media/clisle/KVisImagery/NCI/IDC/Oct2023_RMS_SamplesToIDC/PALMPL-0BMX5D-AKA-RMS2397/image/PALMPL-0BMX5D_1_DCM_3'
+outPath = '/media/clisle/KVisImagery/NCI/IDC/Oct2023_RMS_SamplesToIDC/PALMPL-0BMX5D-AKA-RMS2397/model_prediction'
 
 outfile,outstats = infer_rhabdo(imagePath,outPath)
