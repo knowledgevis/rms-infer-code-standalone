@@ -124,9 +124,9 @@ YELLOW = [255, 255, 0] # NECROSIS: 50
 EPSILON = 1e-6
 
 # what magnification should this pipeline run at
-ANALYSIS_MAGNIFICATION = 2.5
-THRESHOLD_MAGNIFICATION = 0.625
-ASSUMED_SOURCE_MAGNIFICATION = 20.0
+ANALYSIS_MAGNIFICATION = 10.0
+THRESHOLD_MAGNIFICATION = 2.5
+ASSUMED_SOURCE_MAGNIFICATION = 39.5882818685669
 
 # what % interval we should print out progress so it can be snooped by the web interface
 REPORTING_INTERVAL = 5
@@ -583,6 +583,12 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
         #np.save("prob_map_seg.npy",prob_map_seg)
         #np.save('weight_sum.npy',weight_sum)
         prob_map_seg = np.true_divide(prob_map_seg, weight_sum)
+        
+        # output the gaussian smoother to look at the overlaps
+        #small_weights = (weight_sum[0:1000,0:1000,0:3]*255).astype(np.uint8)
+        #np.save('gaussian_weights.np',small_weights)
+        #cv2.imwrite("gaussian_weights.png", small_weights)
+
 
         # *********************************
         # this induced a 1/2 PATCH_OFFSET shift in the output image compared with the reference DICOM. 
@@ -607,21 +613,26 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
     dirName = os.path.dirname(image_path)
     numpyFileName = os.path.join(dirName,fileNoExtension+'_prob_map_seg_stack.npy')
     np.save(numpyFileName, prob_map_seg_stack)
+    print('prob_map_seg_stack:',prob_map_seg_stack.shape)
     pred_map_final = np.argmax(prob_map_seg_stack, axis=-1)
-
+    print('pred_map_final:',pred_map_final.shape)
+    print('pred_map_final dtype:',pred_map_final.dtype)
     pred_map_final_gray = pred_map_final.astype('uint8') * 50
+    print('pred_map_final_gray dtype:',pred_map_final_gray.dtype)
     #del pred_map_final
     gc.collect()
     pred_map_final_ones = [(pred_map_final_gray == v) for v in CLASS_VALUES]
     del pred_map_final_gray
     gc.collect()
     pred_map_final_stack = np.stack(pred_map_final_ones, axis=-1).astype('uint8')
+    print('pred_map_final_stack shape:',pred_map_final_stack.shape)
     del pred_map_final_ones
     gc.collect()
 
     pred_labelmap = pred_map_final
     #pred_labelmap = _gray_to_labelmap(pred_map_final_stack)
     pred_colormap = _gray_to_color(pred_map_final_stack)
+    print('pred_colormap:',pred_colormap.shape)
     del pred_map_final_stack
     gc.collect()
 
