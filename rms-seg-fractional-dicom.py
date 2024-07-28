@@ -122,9 +122,9 @@ YELLOW = [255, 255, 0] # NECROSIS: 50
 EPSILON = 1e-6
 
 # what magnification should this pipeline run at
-ANALYSIS_MAGNIFICATION = 2.5
-THRESHOLD_MAGNIFICATION = 0.625
-ASSUMED_SOURCE_MAGNIFICATION = 20.0
+ANALYSIS_MAGNIFICATION = 10.0
+THRESHOLD_MAGNIFICATION = 2.5
+ASSUMED_SOURCE_MAGNIFICATION = 39.5882818685669
 
 # what % interval we should print out progress so it can be snooped by the web interface
 REPORTING_INTERVAL = 5
@@ -374,7 +374,7 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
         assumedMagnification = False
         # run at the exact magnifiction of the source and generate 25% size for OTSU
         ANALYSIS_MAGNIFICATION = metadata['magnification']
-        THRESHOLD_MAGNIFICATION = ANALYSIS_MAGNIFICATION
+        THRESHOLD_MAGNIFICATION = ANALYSIS_MAGNIFICATION / 4.0
         
     # the theoretical adjustment for the magnification would be as below:
     # height_proc = int(height_org * (ANALYSIS_MAGNIFICATION/metadata['magnification']))
@@ -394,6 +394,7 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
     # this will always generate a 10x region size, even if the source image has lower resolution
     myRegion = {'top': 0, 'left': 0, 'width': width_org, 'height': height_org}
 
+    print('assumedMagnification:',assumedMagnification)
 
     if assumedMagnification:
         # we have to manage the downsizing to the threshold magnification.
@@ -582,8 +583,11 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
         #np.save("prob_map_seg.npy",prob_map_seg)
         #np.save('weight_sum.npy',weight_sum)
         prob_map_seg = np.true_divide(prob_map_seg, weight_sum)
-        prob_map_valid = prob_map_seg[PATCH_OFFSET:PATCH_OFFSET + height, PATCH_OFFSET:PATCH_OFFSET + width, :]
 
+        #  ** the line below induced a 1/2 patch offset of the segmentation with respect to source image
+        #prob_map_valid = prob_map_seg[PATCH_OFFSET:PATCH_OFFSET + height, PATCH_OFFSET:PATCH_OFFSET + width, :]
+        prob_map_valid = prob_map_seg[0:height, 0: width, :]
+        
         # free main system memory since the images are big
         del prob_map_seg
         gc.collect()
@@ -599,7 +603,7 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
     fileNoExtension = os.path.basename(image_path).split('.')[0]
     dirName = os.path.dirname(image_path)
     numpyFileName = os.path.join(dirName,fileNoExtension+'_prob_map_seg_stack.npy')
-    np.save(numpyFileName, prob_map_seg_stack)
+    #np.save(numpyFileName, prob_map_seg_stack)
     pred_map_final = np.argmax(prob_map_seg_stack, axis=-1)
 
     pred_map_final_gray = pred_map_final.astype('uint8') * 50
@@ -613,12 +617,15 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
     gc.collect()
 
     pred_labelmap = pred_map_final
+    print('calculated prob map shape:', prob_map_seg_stack.shape)
     #pred_labelmap = _gray_to_labelmap(pred_map_final_stack)
+
+    #np.save('/home/clisle/proj/mhub/idc/output_data/pred_map_final_stack.npy', pred_map_final_stack)
     pred_colormap = _gray_to_color(pred_map_final_stack)
     del pred_map_final_stack
     gc.collect()
 
-    #np.save('pred_map_final_stack.npy', pred_map_final_stack)
+
     #prob_colormap = _gray_to_color(prob_map_seg_stack)
     #np.save('prob_colormap.npy', prob_colormap)
 
@@ -749,8 +756,10 @@ def start_inference_mainthread(image_file,out_dir):
     # segmentation image.  We will pick a channel from it
     in_basename = os.path.basename(image_file).split(',')[0]
     out_file = os.path.join(out_dir,in_basename+'_probability_seg.dcm')
+    np_file = os.path.join(out_dir,in_basename+'_probability_seg.npy')
     #writeDicomSegObject(image_file,predict_image,out_file)
-    writeDicomFractionalSegObject(image_file,predict_image,out_file)
+    np.save(np_file,predict_image)
+    writeDicomFractionalSegObject(image_file,predict_image[:,:,:3],out_file)
     
     # not needed anymore, returning value through message queue
     return predict_image, predict_color
@@ -846,62 +855,7 @@ def disassemble_total_pixel_matrix(
         )
 
 
-
-
-# from Max to calculate the derived parameters needed when the segmentation image is not the same
-# resolution as the source image.  This creates records that have to be passed in to the creation
-# step in HighDicom. 
-
-def _compute_derived_image_attributes(source_image: Dataset, total_pixel_matrix: np.ndarray) -> Tuple[hd.PlanePositionSequence, hd.PixelMeasuresSequence]:
-    """Compute attributes of a derived single-frame image.
-    Parameters
-    ----------
-    source_image: pydicom.Dataset
-        Source image from which single-frame image was derived
-    total_pixel_matrix: numpy.ndarray
-        Total Pixel matrix of derived single-frame image for which attribute
-        values should be computed
-    Returns
-    -------
-    plane_positions: highdicom.PlanePositionSequence
-        Plane position of the single-frame image
-    pixel_measures: highdicom.PixelMeasuresSequence
-        Pixel measures of the single-frame image
-    """
-    sm_total_rows = int(
-        np.ceil(source_image.TotalPixelMatrixRows / source_image.Rows)
-        * source_image.Rows
-    )
-    sm_total_cols = int(
-        np.ceil(source_image.TotalPixelMatrixColumns / source_image.Columns)
-        * source_image.Columns
-    )
-    origin = source_image.TotalPixelMatrixOriginSequence[0]
-    x_offset = origin.XOffsetInSlideCoordinateSystem
-    y_offset = origin.YOffsetInSlideCoordinateSystem
-    sm_shared_func_groups = source_image.SharedFunctionalGroupsSequence[0]
-    sm_pixel_measures = sm_shared_func_groups.PixelMeasuresSequence[0]
-    sm_pixel_spacing = sm_pixel_measures.PixelSpacing
-    sm_slice_thickness = sm_pixel_measures.SliceThickness
-    derived_pixel_spacing = (
-        (sm_total_rows * sm_pixel_spacing[0]) / total_pixel_matrix.shape[0],
-        (sm_total_cols * sm_pixel_spacing[1]) / total_pixel_matrix.shape[1],
-    )
-    derived_plane_position = hd.PlanePositionSequence(
-        coordinate_system=hd.CoordinateSystemNames.SLIDE,
-        image_position=(x_offset, y_offset, 0.0),
-        pixel_matrix_position=(1, 1),  # there is only one frame
-    )
-    derived_pixel_measures = hd.PixelMeasuresSequence(
-        pixel_spacing=derived_pixel_spacing, slice_thickness=sm_slice_thickness
-    )
-    return (derived_plane_position, derived_pixel_measures)
-
-
-
-
-
-
+#
 
 
 #  This is based on the hidicom output example listed in the readthedocs documentation
@@ -990,13 +944,19 @@ def writeDicomFractionalSegObject(image_path, seg_image, out_path):
     # function stolen from idc-pan-cancer-archive repository to re-tile the numpy to match the tiling
     # from the source image
     print('passing in a numpy array of shape:',seg_image.shape)
-    mask = disassemble_total_pixel_matrix(seg_image[:,:,3],image_dataset)
-    print('disassembled dimensions:',mask.shape)
-    mask_rolled = np.moveaxis(mask, -1, 0)
-    print('rolled dimensions:',mask_rolled.shape)
 
-    # make the derived image header information
-    derived_plane_positions,derived_pixel_measures = _compute_derived_image_attributes(image_dataset, mask)
+    # adjust the seg image to exactly match the size of the  source image.  this may only be needed
+    # for a single level of detail
+    source_rows = image_dataset.TotalPixelMatrixRows
+    source_cols = image_dataset.TotalPixelMatrixColumns
+    mask = np.zeros((source_rows, source_cols,3), np.float32)
+    for i in range(seg_image.shape[0]):
+        for j in range(seg_image.shape[1]):
+            mask[i,j,:] = seg_image[i,j,:]
+
+    #mask_rolled = np.moveaxis(mask, -1, 0)
+    mask_rolled = mask[None, :, :, :]
+    print('rolled dimensions:',mask_rolled.shape)
 
     # Describe the algorithm that created the segmentation
     algorithm_identification = hd.AlgorithmIdentificationSequence(
@@ -1015,21 +975,58 @@ def writeDicomFractionalSegObject(image_path, seg_image, out_path):
         algorithm_identification=algorithm_identification,
         tracking_uid=hd.UID(),
         tracking_id='RMS segmentation_'+str(CHANNEL_DESCRIPTION['chan_1'])
+    ),
+
+      # Describe the segment
+    description_segment_2 = hd.seg.SegmentDescription(
+        segment_number=2,
+        segment_label=CHANNEL_DESCRIPTION['chan_2'],
+        segmented_property_category=codes.cid7150.Tissue,
+        segmented_property_type=codes.cid7166.ConnectiveTissue,
+        algorithm_type=hd.seg.SegmentAlgorithmTypeValues.AUTOMATIC,
+        algorithm_identification=algorithm_identification,
+        tracking_uid=hd.UID(),
+        tracking_id='RMS segmentation_'+str(CHANNEL_DESCRIPTION['chan_2'])
     )
- 
+
+
+    # Describe the segment
+    description_segment_3 = hd.seg.SegmentDescription(
+        segment_number=3,
+        segment_label=CHANNEL_DESCRIPTION['chan_3'],
+        segmented_property_category=codes.cid7150.Tissue,
+        segmented_property_type=codes.cid7166.ConnectiveTissue,
+        algorithm_type=hd.seg.SegmentAlgorithmTypeValues.AUTOMATIC,
+        algorithm_identification=algorithm_identification,
+        tracking_uid=hd.UID(),
+        tracking_id='RMS segmentation_'+str(CHANNEL_DESCRIPTION['chan_3'])
+    )
+
+
+     # Describe the segment
+    description_segment_4 = hd.seg.SegmentDescription(
+        segment_number=4,
+        segment_label=CHANNEL_DESCRIPTION['chan_4'],
+        segmented_property_category=codes.cid7150.Tissue,
+        segmented_property_type=codes.cid7166.ConnectiveTissue,
+        algorithm_type=hd.seg.SegmentAlgorithmTypeValues.AUTOMATIC,
+        algorithm_identification=algorithm_identification,
+        tracking_uid=hd.UID(),
+        tracking_id='RMS segmentation_'+str(CHANNEL_DESCRIPTION['chan_4'])
+    )
+
 
     # Create the Segmentation instance
-    seg_dataset = hd.seg.Segmentation(
+    seg_dataset = hd.seg.create_segmentation_pyramid(
         source_images=[image_dataset],
-        pixel_array=mask,
+        pixel_arrays=[mask],
+        downsample_factors=[2.0, 4.0],
         #segmentation_type=hd.seg.SegmentationTypeValues.BINARY,
         segmentation_type=hd.seg.SegmentationTypeValues.FRACTIONAL,
-        #segment_descriptions=[description_segment_1,description_segment_2,description_segment_3,description_segment_4],
-        segment_descriptions=[description_segment_1],
+        segment_descriptions=[description_segment_1,description_segment_2,description_segment_3,description_segment_4],
+        #segment_descriptions=[description_segment_1],
         series_instance_uid=hd.UID(),
         series_number=2,
-        sop_instance_uid=hd.UID(),
-        instance_number=1,
         # the following two entries are added because the output resolution is different from the source
         #pixel_measures=derived_pixel_measures,
         #plane_positions= derived_plane_positions,
@@ -1041,8 +1038,13 @@ def writeDicomFractionalSegObject(image_path, seg_image, out_path):
 
     #print(seg_dataset)
     # change output file with some function is needed
-    outfileanme = out_path
-    seg_dataset.save_as(outfileanme)
+    outfilename = out_path
+    if len(seg_dataset)>1:
+        for i,seg in enumerate(seg_dataset):
+            outfilename = out_path + '_'+str(i)+'.dcm'
+            seg.save_as(outfilename)
+        else:
+            seg_dataset.save_as(outfilename)
 
 
 
@@ -1076,5 +1078,11 @@ outPath = '/media/clisle/Imaging/IDC/low_res_pixelmed/PARNED_lev3_seg.dcm'
 imagePath = '/media/clisle/Imaging/IDC/pmed_low_res2/DCM_3'
 outPath = '/media/clisle/Imaging/IDC/pmed_low_res2'
 
+imagePath = '/media/clisle/KVisImagery/NCI/IDC/Oct2023_RMS_SamplesToIDC/RMS2397_source_level/3f40a518-bf63-40fd-bdae-4ee09e2d8865.dcm'
+outPath = '/media/clisle/KVisImagery/NCI/IDC/Oct2023_RMS_SamplesToIDC/PALMPL-0BMX5D-AKA-RMS2397/new_model_prediction_v2'
+
+imagePath = '/home/clisle/proj/mhub/idc/input_data/image2/DCM_4.dcm'
+outPath = '/home/clisle/proj/mhub/idc/output_data'
 
 outfile,outstats = infer_rhabdo(imagePath,outPath)
+
